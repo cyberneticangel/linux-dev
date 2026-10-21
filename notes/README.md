@@ -9,6 +9,7 @@ once cloned). **The upstream docs win** over these notes, so re-check them when 
 
 | File | What's in it |
 |---|---|
+| [getting-started.md](getting-started.md) | Beginner roadmap from a security background: build loop, security code paths, syzbot, first patch |
 | [environment.md](environment.md) | Using this repo's flake: build, Rust, `kboot` in QEMU, gdb, daily loop |
 | [development-process.md](development-process.md) | Release cycle, merge window timing, which tree takes what, stable, regressions |
 | [submitting-patches.md](submitting-patches.md) | Commit messages, tags, **DCO and AI-tool rules**, checklist, b4 / send-email, review etiquette |
