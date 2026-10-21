@@ -1,0 +1,35 @@
+# Lima VM for kernel builds (aarch64 Debian, Apple Virtualization, nested KVM on M3+).
+#   limactl create --name=kernel lima/kernel.yaml && limactl start kernel
+#   limactl shell kernel
+# The kernel tree must live on the VM's own disk (ext4, case-sensitive), e.g. ~/src/linux,
+# not under the ~/dev mount from macOS.
+base: template:debian-13
+
+vmType: vz
+nestedVirtualization: true # /dev/kvm in the guest, so kboot uses KVM
+cpus: 8
+memory: 8GiB
+disk: 100GiB # sparse; a kernel tree + a few build dirs is ~20-40 GiB
+
+mountType: virtiofs
+mounts:
+  # Edit notes / flake from either side. Don't put kernel trees here.
+  # Appears in the guest at the same path (/Users/dylan/dev), not under the guest's ~.
+  - location: "~/dev"
+    writable: true
+
+provision:
+  - mode: system
+    script: |
+      #!/bin/sh
+      set -eu
+      [ -x /nix/var/nix/profiles/default/bin/nix ] && exit 0
+      apt-get update
+      apt-get install -y --no-install-recommends curl ca-certificates git direnv
+      curl -fsSL https://install.determinate.systems/nix | sh -s -- install --no-confirm
+  - mode: user
+    script: |
+      #!/bin/sh
+      set -eu
+      grep -q 'direnv hook' ~/.bashrc 2>/dev/null || echo 'eval "$(direnv hook bash)"' >> ~/.bashrc
+      mkdir -p ~/src

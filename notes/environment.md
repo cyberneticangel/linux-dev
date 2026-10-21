@@ -11,16 +11,37 @@ The flake in this repo provides two shells:
 on macOS' case-insensitive APFS. Upstream doesn't document macOS as a build host. Build inside
 the aarch64 Linux VM, as with asahi-dev.
 
+## 0. The VM (Lima, on the Mac)
+
+`lima/kernel.yaml` defines an aarch64 Debian VM on Apple's Virtualization framework:
+8 CPUs, 8 GiB RAM, a 100 GiB sparse disk, nested virtualisation (so `/dev/kvm` exists and
+`kboot` uses KVM; needs M3 or later), and `~/dev` mounted writable over virtiofs. On first
+boot it installs Nix (Determinate) and direnv.
+
+```sh
+limactl create --name=kernel lima/kernel.yaml
+limactl start kernel
+limactl shell kernel            # or: ssh -F ~/.lima/kernel/ssh.config lima-kernel
+```
+
+- **Never put a kernel tree under the `~/dev` mount.** It's the Mac's case-insensitive
+  filesystem. Kernel trees go on the VM disk: `~/src/linux`.
+- Stop with `limactl stop kernel`. Resize by editing `~/.lima/kernel/lima.yaml`, then restarting.
+- The mount appears in the guest at the **Mac path**, `/Users/dylan/dev`, not under the guest's
+  `~` (`/home/dylan.linux`). So the flake is at `/Users/dylan/dev/linux-dev`, and
+  `nix develop /Users/dylan/dev/linux-dev#kernel` works from any directory.
+
 ## 1. First-time setup (in the Linux VM)
 
 ```sh
-cd linux-dev                    # this repo, shared into the VM or cloned there
-nix develop .#kernel            # or: echo 'use flake .#kernel' > .envrc.local + direnv
-git clone https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git linux
-cd linux
+git clone https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git ~/src/linux
+cd ~/src/linux
+echo 'use flake /Users/dylan/dev/linux-dev#kernel' > .envrc && direnv allow
+echo .envrc >> .git/info/exclude          # keep it out of kernel commits
 ```
 
-`linux/` is gitignored. Mainline is the base, but **don't develop against it**. Base each
+`cd ~/src/linux` now loads the kernel shell automatically. (On a native Linux box, cloning
+into the gitignored `linux-dev/linux/` works too.) Mainline is the base, but **don't develop against it**. Base each
 series on the tree from the subsystem's `T:` line in `MAINTAINERS`. Add those trees as remotes:
 
 ```sh
