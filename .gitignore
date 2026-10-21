@@ -1,0 +1,4 @@
+.direnv/
+linux/
+build/
+*.cpio.gz
