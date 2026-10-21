@@ -208,11 +208,31 @@
             LLVM = "1";
             KBOOT_INITRD = "${initramfs}";
 
+            # The wrapped clang adds -nostdlibinc, which the kernel's -nostdinc makes
+            # unused, and Makefile.clang turns that into an error. Build the kernel
+            # itself with the unwrapped clang: make CC="$KERNEL_CC" (kdev does this).
+            # Host tools keep the wrapped clang (HOSTCC) for libc headers.
+            KERNEL_CC = "${llvm.clang-unwrapped}/bin/clang";
+            # Host tools link with -fuse-ld=lld, i.e. the unwrapped lld, so they get
+            # no rpath to Nix libraries; add one for the libraries they use.
+            HOSTLDFLAGS = "-Wl,-rpath,${
+              lib.makeLibraryPath (
+                with pkgs;
+                [
+                  openssl
+                  elfutils
+                  zlib
+                  zstd
+                ]
+              )
+            }";
+
             shellHook = ''
               echo "kernel shell: $(clang --version | head -1), $(rustc --version)"
-              echo "  check Rust support:  make rustavailable"
-              echo "  configure / build:   make defconfig && make -j$(nproc)"
+              echo "  check Rust support:  make CC=\"\$KERNEL_CC\" rustavailable"
+              echo "  configure / build:   make CC=\"\$KERNEL_CC\" defconfig && make CC=\"\$KERNEL_CC\" -j$(nproc)"
               echo "  boot it in QEMU:     kboot"
+              echo "  or all in one:       scripts/kdev (in linux-dev)"
             '';
           };
         }

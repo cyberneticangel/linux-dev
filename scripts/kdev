@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+# kdev: configure, build and boot a kernel in one go.
+#
+# Builds out of tree into <repo>/build/<arch> (so native and cross builds can
+# coexist), then boots the result with kboot. Enters the flake's kernel shell
+# first if it isn't already active.
+set -euo pipefail
+
+script=$(readlink -f "${BASH_SOURCE[0]}")
+repo=$(dirname "$(dirname "$script")")
+
+# Get the toolchain, kboot and KBOOT_INITRD from the flake's kernel shell.
+if [ -z "${KDEV_IN_SHELL:-}" ] && { [ -z "${KBOOT_INITRD:-}" ] || ! command -v kboot >/dev/null; }; then
+	echo "kdev: entering nix develop $repo#kernel" >&2
+	export KDEV_IN_SHELL=1
+	exec nix develop "$repo#kernel" --command bash "$script" "$@"
+fi
+
+usage() {
+	cat <<EOF
+usage: kdev [options] [-- extra qemu args]
+
+  -a ARCH     target arch: x86_64 or arm64 (default: host, $(uname -m))
+  -C DIR      kernel source tree (default: cwd if it's a kernel tree, else $repo/linux)
+  -O DIR      build directory (default: $repo/build/<arch>)
+  -c TARGETS  config targets used when configuring (default: "defconfig kvm_guest.config")
+  -r          reconfigure even if a .config already exists
+  -j N        parallel jobs (default: nproc)
+  -b          build only, don't boot
+  -n          boot only, don't build
+  -g          boot paused with a gdb stub on :1234 (qemu -s -S)
+  -h          show this help
+
+Extra kernel command line: KBOOT_APPEND="..." kdev
+
+Examples:
+  kdev                      # configure if needed, build, boot
+  kdev -r -c "defconfig kvm_guest.config debug.config"
+  kdev -a arm64             # cross-build arm64 and boot it under emulation
+  kdev -g                   # then: gdb build/x86_64/vmlinux -ex 'target remote :1234'
+EOF
+}
+
+arch=$(uname -m)
+tree=
+out=
+config_targets="defconfig kvm_guest.config"
+reconfigure=0
+jobs=$(nproc)
+do_build=1
+do_boot=1
+gdb=0
+
+while getopts "a:C:O:c:rj:bngh" opt; do
+	case $opt in
+	a) arch=$OPTARG ;;
+	C) tree=$OPTARG ;;
+	O) out=$OPTARG ;;
+	c) config_targets=$OPTARG ;;
+	r) reconfigure=1 ;;
+	j) jobs=$OPTARG ;;
+	b) do_boot=0 ;;
+	n) do_build=0 ;;
+	g) gdb=1 ;;
+	h) usage; exit 0 ;;
+	*) usage >&2; exit 1 ;;
+	esac
+done
+shift $((OPTIND - 1))
+
+case $arch in
+x86_64 | x86) arch=x86_64 ;;
+arm64 | aarch64) arch=arm64 ;;
+*) echo "kdev: unsupported arch '$arch' (use x86_64 or arm64)" >&2; exit 1 ;;
+esac
+
+if [ -z "$tree" ]; then
+	if [ -f Kbuild ] && [ -f Makefile ] && [ -d arch ]; then
+		tree=$PWD
+	else
+		tree=$repo/linux
+	fi
+fi
+tree=$(readlink -f "$tree")
+if [ ! -f "$tree/Kbuild" ]; then
+	echo "kdev: $tree is not a kernel tree (clone one there or pass -C DIR)" >&2
+	exit 1
+fi
+
+out=${out:-$repo/build/$arch}
+mkdir -p "$out"
+out=$(readlink -f "$out")
+
+kmake() {
+	# KERNEL_CC (unwrapped clang) comes from the flake; see the comment there.
+	make -C "$tree" O="$out" ARCH="$arch" LLVM=1 CC="${KERNEL_CC:-clang}" -j"$jobs" "$@"
+}
+
+if [ "$do_build" = 1 ]; then
+	if [ -f "$tree/.config" ]; then
+		echo "kdev: $tree has an in-tree build; out-of-tree builds need it clean." >&2
+		echo "      Run 'make -C $tree mrproper' (deletes the in-tree build) and retry." >&2
+		exit 1
+	fi
+
+	if [ "$reconfigure" = 1 ] || [ ! -f "$out/.config" ]; then
+		echo "kdev: configuring $arch: $config_targets" >&2
+		# shellcheck disable=SC2086 # word splitting is intended
+		kmake $config_targets
+	fi
+
+	echo "kdev: building $arch in $out" >&2
+	start=$SECONDS
+	kmake
+	echo "kdev: build finished in $((SECONDS - start))s" >&2
+fi
+
+if [ "$do_boot" = 1 ]; then
+	qemu_args=()
+	if [ "$gdb" = 1 ]; then
+		qemu_args+=(-s -S)
+		echo "kdev: paused; attach with: gdb $out/vmlinux -ex 'target remote :1234'" >&2
+		# KASLR moves the kernel away from where vmlinux's symbols say it is.
+		export KBOOT_APPEND="nokaslr ${KBOOT_APPEND:-}"
+	fi
+	echo "kdev: booting (exit the guest shell to power off)" >&2
+	KBUILD_OUTPUT=$out ARCH=$arch exec kboot "${qemu_args[@]}" "$@"
+fi
