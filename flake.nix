@@ -51,7 +51,12 @@
           # Linux shell only: dtschema is marked broken on darwin.
           pythonEnv = pkgs.python3.withPackages (
             ps: with ps; [
-              dtschema
+              # dtschema now requires "pylibfdt" by name, but nixpkgs' libfdt
+              # bindings (ps.libfdt, already a dependency) register under a
+              # different name, so the runtime-deps check fails. Drop the check.
+              (dtschema.overridePythonAttrs (old: {
+                pythonRemoveDeps = (old.pythonRemoveDeps or [ ]) ++ [ "pylibfdt" ];
+              }))
               yamllint
             ]
           );
