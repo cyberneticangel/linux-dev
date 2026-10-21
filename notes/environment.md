@@ -8,40 +8,18 @@ The flake in this repo provides two shells:
 | `nix develop .#kernel` | **Linux only** | everything above, plus clang/lld/LLVM (`LLVM=1` is set), Rust + rust-src + clippy + rustfmt, bindgen, dtschema + yamllint, sparse, smatch, coccinelle, pahole, gdb, ccache, cscope, clangd, and the build deps (bison, flex, bc, openssl, elfutils, ncurses...) |
 
 **Why Linux only:** kernel trees contain files whose names differ only in case, which breaks
-on macOS' case-insensitive APFS. Upstream doesn't document macOS as a build host. Build inside
-the aarch64 Linux VM, as with asahi-dev.
+on macOS' case-insensitive APFS. Upstream doesn't document macOS as a build host. On a Mac, build
+inside the aarch64 Linux VM.
 
-## 0. The VM (Lima, on the Mac)
+## 0. Host setup
 
-`lima/kernel.yaml` defines an aarch64 Debian VM on Apple's Virtualization framework:
-8 CPUs, 8 GiB RAM, a 100 GiB sparse disk, nested virtualisation (so `/dev/kvm` exists and
-`kboot` uses KVM; needs M3 or later), and `~/dev` mounted writable over virtiofs. On first
-boot it installs Nix (Determinate) and direnv.
+Getting Nix, direnv, KVM and a kernel tree in place depends on the host. See
+[`../setup/`](../setup/README.md): [`linux/`](../setup/linux/README.md) (native, no VM) or
+[`macos/`](../setup/macos/README.md) (Lima VM). The rest of this file is the same everywhere.
 
-```sh
-limactl create --name=kernel lima/kernel.yaml
-limactl start kernel
-limactl shell kernel            # or: ssh -F ~/.lima/kernel/ssh.config lima-kernel
-```
+## 1. Remotes
 
-- **Never put a kernel tree under the `~/dev` mount.** It's the Mac's case-insensitive
-  filesystem. Kernel trees go on the VM disk: `~/src/linux`.
-- Stop with `limactl stop kernel`. Resize by editing `~/.lima/kernel/lima.yaml`, then restarting.
-- The mount appears in the guest at the **Mac path**, `/Users/dylan/dev`, not under the guest's
-  `~` (`/home/dylan.linux`). So the flake is at `/Users/dylan/dev/linux-dev`, and
-  `nix develop /Users/dylan/dev/linux-dev#kernel` works from any directory.
-
-## 1. First-time setup (in the Linux VM)
-
-```sh
-git clone https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git ~/src/linux
-cd ~/src/linux
-echo 'use flake /Users/dylan/dev/linux-dev#kernel' > .envrc && direnv allow
-echo .envrc >> .git/info/exclude          # keep it out of kernel commits
-```
-
-`cd ~/src/linux` now loads the kernel shell automatically. (On a native Linux box, cloning
-into the gitignored `linux-dev/linux/` works too.) Mainline is the base, but **don't develop against it**. Base each
+Mainline is the base, but **don't develop against it**. Base each
 series on the tree from the subsystem's `T:` line in `MAINTAINERS`. Add those trees as remotes:
 
 ```sh
@@ -108,9 +86,7 @@ kboot -s -S                           # extra args go to QEMU: here, wait for gd
   TCG otherwise. In a VM without nested virtualisation it falls back to TCG, which is slower
   but fine for a busybox boot.
 - Quit QEMU with `Ctrl-a x`.
-- **On the Mac (hvf, fastest):** copy `arch/arm64/boot/Image` and the initramfs out of the VM
-  (`echo $KBOOT_INITRD` in the kernel shell), then
-  `KBOOT_IMAGE=Image KBOOT_INITRD=kboot-initramfs.cpio.gz ARCH=arm64 kboot`.
+- **On the Mac (hvf, fastest):** see [`../setup/macos/`](../setup/macos/README.md#booting-on-the-mac-with-hvf-optional-fastest).
 - This is for generic and core code. Apple-SoC drivers need real hardware via m1n1 (see
   `../asahi-dev/notes/`).
 
